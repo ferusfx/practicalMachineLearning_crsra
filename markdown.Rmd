@@ -1,0 +1,107 @@
+---
+title: 'Machine Learning - Course Project'
+author: "O. Denisov"
+date: "Sunday, May 24, 2015"
+output: html_document
+---
+
+# Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [link](http://groupware.les.inf.puc-rio.br/har). The goal of this project is to predict the manner in which they did the execise.
+
+# Preparing Training Data
+
+First, we download the datasets to our local machine and filter them to replace noise / missing data with 'NA'. 
+```{r,warning=FALSE}
+library(caret)
+library(doParallel)
+library(randomForest)
+
+set.seed(4711)
+
+training.set   <- read.csv('pml-training.csv', na.strings=c("NA","#DIV/0!", ""))
+test.set       <- read.csv('pml-test.csv' , na.strings=c("NA", "#DIV/0!", ""))
+
+dim(training.set)
+table(training.set$classe)
+
+
+```
+
+There are 19622 observations in the training dataset with 160 variables, some of which contain NA values. As the 'classe' variable is our target variable (i.e. for the testing set), we remove also all those variables, that do not relate directly to this variable, such as 'X' and timestamps.
+
+```{r}
+
+na.count = sapply(1:dim(training.set)[2], 
+                  function(x) sum(is.na(training.set[,x])))
+na.cols = which(na.count > 0)
+colnames(training.set[,c(1:5)])
+
+# Training set update
+training.set = training.set[,-na.cols]
+training.set = training.set[,-c(1:5)]
+training.set$classe = factor(training.set$classe)
+
+# Testing set update
+test.set = test.set[,-na.cols]
+test.set = test.set[,-c(1:5)]
+test.set$new_window <- factor(test.set$new_window, levels=c("no","yes"))
+```
+
+# Partitioning and Model Fitting
+
+We create a common Training Set to Test Set ratio of 60% to 40%.
+
+Then we fit the predictive model, using the 'parRF' Parallel Random Forest classification algorithm, which does not require cross-validation to get an unbiased estimate of the test set error. During the fitting process it is internally estimated.
+
+```{r, warning=FALSE}
+train.ratio  <- createDataPartition(training.set$classe, p = 0.6, list = FALSE)
+training.data <- training.set[train.ratio, ]
+test.data <- training.set[-train.ratio, ]
+
+class <- training.data$classe
+data  <- training.data[-ncol(training.data)]
+
+registerDoParallel()
+
+fit <- train(data, 
+            class,
+            method = "parRF",
+            tuneGrid = data.frame(mtry = 3),
+            trControl = trainControl(method = "none"))
+
+print(fit)
+```
+
+# Confusion Matrix
+
+We predict on the testing set and generate the confusion matrix, resulting in a very solid accuracy of 99.35%. 
+
+```{r}
+test.predictions <- predict(fit, newdata = test.data)
+conf.matrix <- confusionMatrix(test.predictions, test.data$classe)
+print(conf.matrix)
+
+```
+
+# Predictions
+
+As can be seen from the confusion matrix this model is very accurate. I did experiment with other models, but could not achieve a similar accuracy. 
+
+Prepare the submission.
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+answers <- predict(fit, test.set)
+# The predicted classes for the 20 tests are:
+print(answers)
+# Process Output:
+pml_write_files(answers)
+```
